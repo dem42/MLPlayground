@@ -178,6 +178,7 @@ impl Agent for Human {
 
 pub struct QLearningBot {
     q_table: Vec<Vec<f32>>,
+    discount_factor: f32,
     learning_rate: f32,
     exploration_param: f32,
     rng: ThreadRng,
@@ -186,7 +187,15 @@ pub struct QLearningBot {
 impl QLearningBot {
     const ACTION_LIST: [Action; 2] = [Action::Left, Action::Right];
 
-    fn get_max_q_table_action(&self, player_pos: usize) -> Action {
+    fn initialize_q_table(&mut self) {
+        for val in self.q_table.iter_mut() {
+            for i in 0..val.len() {
+                val[i] = self.rng.gen();
+            }
+        }
+    }
+
+    fn get_max_q_table_action(&self, player_pos: usize) -> (Action, f32) {
         let (mut max_action_id, mut max_action_val) = (0, 0.0);        
         for action_id in 0..self.q_table[player_pos].len() {
             if self.q_table[player_pos][action_id] > max_action_val {
@@ -194,11 +203,20 @@ impl QLearningBot {
                 max_action_val = self.q_table[player_pos][action_id];
             }
         }
-        Self::ACTION_LIST[max_action_id].clone()
+        (Self::ACTION_LIST[max_action_id].clone(), max_action_val)
     }
 
-    fn update_q_table(&mut self, player_pos: usize, action: Action, score_delta: f32) {
-        let action_id = Self::ACTION_LIST.iter().position(|x| *x == action);
+    fn update_q_table(&mut self, old_player_pos: usize, new_player_pos: usize, action: Action, score_delta: f32) {
+        let action_id = Self::get_action_id(action);
+        let old_state_quality = self.q_table[old_player_pos][action_id];
+        let (_best_action, best_quality_in_future) = self.get_max_q_table_action(new_player_pos);        
+        let reward = score_delta;
+        let new_state_quality = (1.0 - self.learning_rate) * old_state_quality + self.learning_rate * (reward + self.discount_factor * best_quality_in_future);
+        self.q_table[old_player_pos][action_id] = new_state_quality;
+    }
+
+    fn get_action_id(action: Action) -> usize {
+        Self::ACTION_LIST.iter().position(|x| *x == action).expect("Must be a real action")
     }
 }
 
@@ -209,13 +227,14 @@ impl Agent for QLearningBot {
             let r_action = self.rng.gen_range(0, Self::ACTION_LIST.len());
             Self::ACTION_LIST[r_action].clone()
         } else {
-            self.get_max_q_table_action(game.player_pos)
+            let (best_action, _) = self.get_max_q_table_action(game.player_pos);
+            best_action
         };
         let old_score = game.score;
         let old_position = game.player_pos;
-        game.update(action);
+        game.update(action.clone());
         let score_delta = game.score - old_score;
-        self.update_q_table(old_position, action, score_delta as f32);
+        self.update_q_table(old_position, game.player_pos, action, score_delta as f32);
     }
 }
 
@@ -226,13 +245,16 @@ pub mod AgentFactory {
         Human {}
     }
 
-    pub fn bot(learning_rate: f32, exploration_param: f32, game: &Game) -> QLearningBot {
+    pub fn bot(learning_rate: f32, discount_factor: f32, exploration_param: f32, game: &Game) -> QLearningBot {
         let q_table = vec![vec![0f32; QLearningBot::ACTION_LIST.len()]; game.state.world.len()];
-        QLearningBot {
+        let mut bot = QLearningBot {
+            discount_factor,
             learning_rate,
             exploration_param,
             q_table,
             rng: rand::thread_rng(),
-        }
+        };
+        bot.initialize_q_table();
+        bot
     }
 }
