@@ -9,7 +9,7 @@ fn main() {
     let state = State { world };
 
     let mut game = Game::new(state);
-    let mut agent = AgentFactory::bot(0.2, 0.9, 0.9, &game);
+    let mut agent = agent_factory::bot(0.2, 0.9, &game);
 
     loop {
         let action = agent.act(&mut game);        

@@ -1,5 +1,6 @@
 extern crate rand;
 use rand::prelude::*;
+use std::{thread, time};
 
 pub fn test() {
     println!("this is a test");
@@ -15,6 +16,14 @@ pub enum TileType {
     Player,
     Pit,
     Cheese,    
+}
+
+#[derive(PartialEq)]
+pub enum MoveResult {
+    NextRound,
+    Win,
+    Loss,
+    Quit,
 }
 
 #[derive(Debug)]
@@ -41,53 +50,76 @@ impl Game {
         }
     }
 
-    pub fn update(&mut self, action: Action) {
+    pub fn update(&mut self, action: Action) -> MoveResult {
         match action {
-            Action::Invalid => println!("Invalid action"),
+            Action::Invalid => {
+                println!("Invalid action");
+                MoveResult::Loss
+            },
             Action::Left => {
                 if self.player_pos == 0 {
                     println!("Player leaving board");
                     self.score = -1;
+                    MoveResult::Loss
                 } else {
                     self.state.world[self.player_pos] = TileType::Empty;
                     self.player_pos -= 1;
-                    self.evaluate_new_pos();
+                    self.evaluate_new_pos()
                 }
             },
             Action::Right => {
                 if self.player_pos == self.state.world.len() - 1 {
                     println!("Player leaving board");
                     self.score = -1;
+                    MoveResult::Loss
                 } else {
                     self.state.world[self.player_pos] = TileType::Empty;
                     self.player_pos += 1;
-                    self.evaluate_new_pos();
+                    self.evaluate_new_pos()
                 }                
             },            
-            Action::Quit => self.quit = true,
-            _ => panic!("Unhandled action {:?}", action),
+            Action::Quit => {
+                self.quit = true;
+                MoveResult::Quit
+            },
         }
     }
 
-    fn evaluate_new_pos(&mut self) {
+    fn evaluate_new_pos(&mut self) -> MoveResult {
         match self.state.world[self.player_pos] {
             TileType::Cheese => {                                
                 self.win();
+                MoveResult::Win
             },
             TileType::Pit => {
                 self.lose();
+                MoveResult::Loss
             },
             TileType::Empty => {
-                self.state.world[self.player_pos] = TileType::Player;                
+                self.state.world[self.player_pos] = TileType::Player;
+                MoveResult::NextRound
             },
             _ => {
                 panic!("Unhandled tile type {:?}", self.state.world[self.player_pos]);
             },
-        }                    
+        }
+    }
+
+    pub fn print_state(&self) {
+        print!("#");
+        for tile in &self.state.world {
+            match tile {
+                TileType::Empty => print!("="),
+                TileType::Player => print!("P"),
+                TileType::Cheese => print!("C"),
+                TileType::Pit => print!("O"),
+            }
+        }
+        println!("# | Score: {} | Run: {}", self.score, self.runs);
     }
 
     pub fn game_over(&self) -> bool {
-        self.quit || self.score <= -5 || self.score >= 5
+        self.quit || self.runs > 20
     }
 
     fn win(&mut self) {
@@ -127,20 +159,7 @@ pub struct Human {
 
 }
 
-impl Human {    
-    fn print_state(game: &Game) {
-        print!("#");
-        for tile in &game.state.world {
-            match tile {
-                TileType::Empty => print!("="),
-                TileType::Player => print!("P"),
-                TileType::Cheese => print!("C"),
-                TileType::Pit => print!("O"),
-            }
-        }
-        println!("# | Score: {} | Run: {}", game.score, game.runs);        
-    }
-
+impl Human {
     fn get_action() -> Action {
         use std::io;
         let mut input = String::new();
@@ -166,7 +185,7 @@ impl Human {
 
 impl Agent for Human {
     fn act(&mut self, game: &mut Game) {
-        Self::print_state(game);
+        game.print_state();
         let mut action = Action::Invalid;
         while action == Action::Invalid {
             println!("Type 'A' to move left, 'D' to move right, 'Q' else to quit, and then press 'Enter'.");
@@ -222,6 +241,11 @@ impl QLearningBot {
 
 impl Agent for QLearningBot {
     fn act(&mut self, game: &mut Game) {
+        game.print_state();
+        let timeout = time::Duration::from_millis(200);
+        thread::sleep(timeout);
+
+        self.exploration_param = 1.0 / game.runs as f32;
         let roll: f32 = self.rng.gen();
         let action = if roll < self.exploration_param {
             let r_action = self.rng.gen_range(0, Self::ACTION_LIST.len());
@@ -232,25 +256,33 @@ impl Agent for QLearningBot {
         };
         let old_score = game.score;
         let old_position = game.player_pos;
-        game.update(action.clone());
+        let move_result = game.update(action.clone());
         let score_delta = game.score - old_score;
         self.update_q_table(old_position, game.player_pos, action, score_delta as f32);
+
+
+        if (move_result == MoveResult::Win || move_result == MoveResult::Loss) && game.runs % 5 == 0 {
+            for i in 0..self.q_table.len() {
+                print!("({}-{}),", self.q_table[i][0], self.q_table[i][0]);
+            }
+            println!();
+        }
     }
 }
 
-pub mod AgentFactory {
+pub mod agent_factory {
     use super::*;
 
     pub fn human() -> Human {
         Human {}
     }
 
-    pub fn bot(learning_rate: f32, discount_factor: f32, exploration_param: f32, game: &Game) -> QLearningBot {
+    pub fn bot(learning_rate: f32, discount_factor: f32, game: &Game) -> QLearningBot {
         let q_table = vec![vec![0f32; QLearningBot::ACTION_LIST.len()]; game.state.world.len()];
         let mut bot = QLearningBot {
             discount_factor,
             learning_rate,
-            exploration_param,
+            exploration_param: 1.0,
             q_table,
             rng: rand::thread_rng(),
         };
